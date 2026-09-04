@@ -16,7 +16,6 @@ const EXAMPLES = [
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
-  const [accessKey, setAccessKey] = useState("");
   const [launchState, setLaunchState] = useState<LaunchState>({ type: "idle" });
 
   const trimmedPrompt = prompt.trim();
@@ -33,7 +32,7 @@ export default function Home() {
       const response = await fetch("/api/launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmedPrompt, accessKey }),
+        body: JSON.stringify({ prompt: trimmedPrompt }),
       });
 
       const data = (await response.json()) as { message?: string };
@@ -120,33 +119,12 @@ export default function Home() {
             required
           />
 
-          <div className="access-row">
-            <label htmlFor="access-key">
-              <span className="key-symbol" aria-hidden="true">✦</span>
-              Studio access key
-            </label>
-            <input
-              id="access-key"
-              name="access-key"
-              type="password"
-              value={accessKey}
-              onChange={(event) => {
-                setAccessKey(event.target.value);
-                if (launchState.type !== "idle") setLaunchState({ type: "idle" });
-              }}
-              autoComplete="current-password"
-              placeholder="Enter access key"
-              disabled={isLoading}
-              required
-            />
-          </div>
-
           <div className="composer-footer">
             <p id="prompt-help">
               Include mood, pacing, and visual style. Add “upload to YouTube”
               anywhere when you want the result published there.
             </p>
-            <button type="submit" disabled={!trimmedPrompt || !accessKey || isLoading}>
+            <button type="submit" disabled={!trimmedPrompt || isLoading}>
               {isLoading ? (
                 <>
                   <span className="spinner" aria-hidden="true" />

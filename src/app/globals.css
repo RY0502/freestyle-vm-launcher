@@ -280,57 +280,6 @@ a {
   opacity: 0.72;
 }
 
-.access-row {
-  align-items: center;
-  background: rgba(245, 242, 234, 0.7);
-  border: 1px solid rgba(23, 24, 21, 0.1);
-  border-radius: 12px;
-  display: flex;
-  gap: 14px;
-  justify-content: space-between;
-  margin-top: 11px;
-  padding: 9px 10px 9px 13px;
-  position: relative;
-  z-index: 1;
-}
-
-.access-row label {
-  align-items: center;
-  color: #6f7069;
-  display: inline-flex;
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 570;
-  gap: 8px;
-}
-
-.key-symbol {
-  color: var(--moss);
-  font-size: 12px;
-}
-
-.access-row input {
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(23, 24, 21, 0.11);
-  border-radius: 8px;
-  color: var(--ink);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 11px;
-  max-width: 220px;
-  outline: none;
-  padding: 9px 11px;
-  transition: border-color 180ms ease, box-shadow 180ms ease;
-  width: 100%;
-}
-
-.access-row input:focus {
-  border-color: rgba(83, 101, 55, 0.65);
-  box-shadow: 0 0 0 3px rgba(217, 255, 87, 0.2);
-}
-
-.access-row input::placeholder {
-  color: #a2a39c;
-}
 
 .composer-footer {
   align-items: center;
@@ -653,14 +602,6 @@ footer {
     flex-direction: column;
   }
 
-  .access-row {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .access-row input {
-    max-width: none;
-  }
 
   .composer-footer button {
     width: 100%;

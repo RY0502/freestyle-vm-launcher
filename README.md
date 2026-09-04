@@ -6,7 +6,7 @@ a detached background job.
 
 ## What happens on submit
 
-1. The server validates the shared studio key and prompt.
+1. The server validates the prompt.
 2. It fetches `FREESTYLE_VM_ID` and accepts only an exact `paused` state.
 3. A running or transitioning VM returns HTTP `409` with:
    `The VM is already running. Try back again in some time.`
@@ -61,14 +61,13 @@ npm run dev
 ```
 
 Fill every required value in `.env.local`. Never prefix the Freestyle API key,
-VM ID, team ID, or access key with `NEXT_PUBLIC_`.
+VM ID, or team ID with `NEXT_PUBLIC_`.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `FREESTYLE_API_KEY` | Yes | Server-side Freestyle API authentication |
 | `FREESTYLE_VM_ID` | Yes | The single VM this app is allowed to launch |
 | `FREESTYLE_TEAM_ID` | Yes | Team identifier used for manual CLI operations |
-| `APP_ACCESS_KEY` | Yes | Shared launch key; minimum 16 characters |
 | `FREESTYLE_PROJECT_DIR` | No | Absolute VM project path; defaults to `/home/ubuntu/freeai-video-deepagent` |
 | `FREESTYLE_LINUX_USER` | No | Linux user used by `vm.exec`; defaults to the VM's uid-1000 user when omitted |
 | `APP_ORIGIN` | Production | Exact browser origin allowed to submit jobs |
@@ -78,12 +77,6 @@ Create a non-interactive Freestyle API key from an authenticated terminal:
 
 ```bash
 npx freestyle@latest tokens create "deepframe-vercel"
-```
-
-Generate a separate site access key:
-
-```bash
-openssl rand -base64 32
 ```
 
 ## VM prerequisites
@@ -138,8 +131,7 @@ put the team API key inside the VM.
 4. Deploy. The endpoint explicitly uses the Node.js runtime and a 60-second
    maximum duration.
 5. Add Vercel Firewall rate limiting or restrict the deployment to approved
-   users. The application access key is the first protection layer, not a
-   replacement for organization authentication.
+   users if organization authentication is required.
 
 The route intentionally never pauses the VM after launch. A timeout can be
 ambiguous—the background task might already have started—so inspect the PID and

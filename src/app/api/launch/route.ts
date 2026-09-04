@@ -1,5 +1,3 @@
-import { createHash, timingSafeEqual } from "node:crypto";
-
 import { Freestyle, FreestyleApiError, type VmState } from "freestyle";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -54,7 +52,6 @@ printf '%s\n' "$pid"
 
 type LaunchRequestBody = {
   prompt?: unknown;
-  accessKey?: unknown;
 };
 
 type ServerConfig = {
@@ -62,7 +59,6 @@ type ServerConfig = {
   vmId: string;
   teamId: string;
   projectDir: string;
-  accessKey: string;
   allowedOrigin?: string;
   linuxUser?: string;
 };
@@ -88,7 +84,6 @@ function getServerConfig(): ServerConfig {
   const apiKey = process.env.FREESTYLE_API_KEY?.trim();
   const vmId = process.env.FREESTYLE_VM_ID?.trim();
   const teamId = process.env.FREESTYLE_TEAM_ID?.trim();
-  const accessKey = process.env.APP_ACCESS_KEY;
   const projectDir =
     process.env.FREESTYLE_PROJECT_DIR?.trim() ??
     "/home/ubuntu/freeai-video-deepagent";
@@ -99,18 +94,11 @@ function getServerConfig(): ServerConfig {
     !apiKey && "FREESTYLE_API_KEY",
     !vmId && "FREESTYLE_VM_ID",
     !teamId && "FREESTYLE_TEAM_ID",
-    !accessKey && "APP_ACCESS_KEY",
   ].filter(Boolean);
 
   if (missing.length > 0) {
     throw new ConfigurationError(
       `Missing server environment variables: ${missing.join(", ")}`,
-    );
-  }
-
-  if (accessKey!.length < 16) {
-    throw new ConfigurationError(
-      "APP_ACCESS_KEY must contain at least 16 characters.",
     );
   }
 
@@ -132,16 +120,9 @@ function getServerConfig(): ServerConfig {
     vmId: vmId!,
     teamId: teamId!,
     projectDir,
-    accessKey: accessKey!,
     allowedOrigin,
     linuxUser,
   };
-}
-
-function secureEqual(value: string, expected: string) {
-  const valueHash = createHash("sha256").update(value).digest();
-  const expectedHash = createHash("sha256").update(expected).digest();
-  return timingSafeEqual(valueHash, expectedHash);
 }
 
 function hasAllowedOrigin(request: NextRequest, configuredOrigin?: string) {
@@ -248,12 +229,6 @@ export async function POST(request: NextRequest) {
     return json({ message: "The request body must be valid JSON." }, 400);
   }
 
-  if (
-    typeof body.accessKey !== "string" ||
-    !secureEqual(body.accessKey, config.accessKey)
-  ) {
-    return json({ message: "The studio access key is incorrect." }, 401);
-  }
 
   const validatedPrompt = validatePrompt(body.prompt);
 
