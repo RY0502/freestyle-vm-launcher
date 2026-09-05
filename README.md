@@ -137,6 +137,22 @@ The route intentionally never pauses the VM after launch. A timeout can be
 ambiguous—the background task might already have started—so inspect the PID and
 log before retrying.
 
+To pause a configured VM through the app, send a GET request to
+`/pause/vm`. The endpoint checks the current state first, does nothing when the
+VM is already paused or pausing, and logs each decision. Add `?machine=1` or
+another positive machine number to select the corresponding suffixed variables,
+such as `FREESTYLE_API_KEY_1`, `FREESTYLE_VM_ID_1`, and
+`FREESTYLE_TEAM_ID_1`. Without `machine`, it uses the unsuffixed variables.
+
+The pause endpoint does not require authentication. To start a numbered VM and
+launch its `prompt.txt` process, send a GET request to `/start/vm?machine=1`.
+The `machine` query parameter is required, and the endpoint uses only the
+matching suffixed variables. It does nothing when the VM is already running or
+starting, and logs each state check and launch result.
+The numbered start route also requires `FREESTYLE_PROJECT_DIR_1` (or the
+matching machine suffix) for the VM project directory. Routes using no machine
+number use the unsuffixed `FREESTYLE_PROJECT_DIR` default.
+
 ## Validation
 
 ```bash
