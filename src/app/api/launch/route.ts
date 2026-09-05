@@ -36,7 +36,7 @@ case "$old_pid" in
 esac
 
 if [ "$PERFORM_CLEANUP" = "1" ]; then
-  USER_PROMPT="\${USER_PROMPT}. Perform cleanup after successful load."
+  USER_PROMPT="${"$"}{USER_PROMPT}. Perform cleanup after successful load."
 fi
 
 set -- "$USER_PROMPT"
