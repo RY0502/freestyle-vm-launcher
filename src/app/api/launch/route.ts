@@ -8,9 +8,6 @@ export const maxDuration = 60;
 const BUSY_MESSAGE =
   "The VM is already running. Try back again in some time.";
 
-const YOUTUBE_UPLOAD_PATTERN =
-  /\bupload\s+to\s+(?:youtube|you\s+tube)\b/i;
-
 const REMOTE_LAUNCH_COMMAND = String.raw`
 set -u
 cd "$PROJECT_DIR" || exit 72
@@ -38,6 +35,10 @@ case "$old_pid" in
     ;;
 esac
 
+if [ "$PERFORM_CLEANUP" = "1" ]; then
+  USER_PROMPT="\${USER_PROMPT}. Perform cleanup after successful load."
+fi
+
 set -- "$USER_PROMPT"
 
 if [ "$YOUTUBE_UPLOAD" = "1" ]; then
@@ -52,6 +53,8 @@ printf '%s\n' "$pid"
 
 type LaunchRequestBody = {
   prompt?: unknown;
+  youtube?: unknown;
+  cleanup?: unknown;
 };
 
 type ServerConfig = {
@@ -168,8 +171,16 @@ function isBusyState(state: VmState) {
   return state === "running" || state === "starting" || state === "pausing";
 }
 
-function requestsYoutubeUpload(prompt: string) {
-  return YOUTUBE_UPLOAD_PATTERN.test(prompt);
+function validateOption(value: unknown, name: string) {
+  if (typeof value !== "boolean") {
+    return { error: `${name} must be a boolean.` } as const;
+  }
+
+  return { value } as const;
+}
+
+function uncachedFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
 }
 
 async function waitUntilRunning(
@@ -236,7 +247,21 @@ export async function POST(request: NextRequest) {
     return json({ message: validatedPrompt.error }, 400);
   }
 
-  const freestyle = new Freestyle({ apiKey: config.apiKey });
+  const validatedYoutube = validateOption(body.youtube, "youtube");
+  const validatedCleanup = validateOption(body.cleanup, "cleanup");
+
+  if ("error" in validatedYoutube) {
+    return json({ message: validatedYoutube.error }, 400);
+  }
+
+  if ("error" in validatedCleanup) {
+    return json({ message: validatedCleanup.error }, 400);
+  }
+
+  const freestyle = new Freestyle({
+    apiKey: config.apiKey,
+    fetch: uncachedFetch,
+  });
 
   try {
     const current = await freestyle.vms.get(config.vmId);
@@ -271,7 +296,8 @@ export async function POST(request: NextRequest) {
       env: {
         PROJECT_DIR: config.projectDir,
         USER_PROMPT: validatedPrompt.value,
-        YOUTUBE_UPLOAD: requestsYoutubeUpload(validatedPrompt.value) ? "1" : "0",
+        YOUTUBE_UPLOAD: validatedYoutube.value ? "1" : "0",
+        PERFORM_CLEANUP: validatedCleanup.value ? "1" : "0",
       },
       linuxUser: config.linuxUser,
       timeoutMs: 30_000,

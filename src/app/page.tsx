@@ -16,6 +16,8 @@ const EXAMPLES = [
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
+  const [youtube, setYoutube] = useState(false);
+  const [cleanup, setCleanup] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>({ type: "idle" });
 
   const trimmedPrompt = prompt.trim();
@@ -32,7 +34,11 @@ export default function Home() {
       const response = await fetch("/api/launch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: trimmedPrompt }),
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+          youtube,
+          cleanup,
+        }),
       });
 
       const data = (await response.json()) as { message?: string };
@@ -137,6 +143,35 @@ export default function Home() {
                 </>
               )}
             </button>
+          </div>
+
+          <div className="composer-options" aria-label="Video options">
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={youtube}
+                onChange={(event) => setYoutube(event.target.checked)}
+                disabled={isLoading}
+              />
+              <span className="toggle-track" aria-hidden="true"><span /></span>
+              <span>
+                <strong>YouTube</strong>
+                <small>Upload the finished video</small>
+              </span>
+            </label>
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                checked={cleanup}
+                onChange={(event) => setCleanup(event.target.checked)}
+                disabled={isLoading}
+              />
+              <span className="toggle-track" aria-hidden="true"><span /></span>
+              <span>
+                <strong>Cleanup</strong>
+                <small>Clean up after successful load</small>
+              </span>
+            </label>
           </div>
 
           <div aria-live="polite" aria-atomic="true">

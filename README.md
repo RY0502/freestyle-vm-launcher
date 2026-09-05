@@ -11,10 +11,13 @@ a detached background job.
 3. A running or transitioning VM returns HTTP `409` with:
    `The VM is already running. Try back again in some time.`
 4. A paused VM is started and polled until it reports `running`.
+   VM reads use `cache: no-store` so a previous request cannot replay an old
+   running state.
 5. The server submits a fixed shell program through Freestyle's SDK. The prompt
    is passed as an environment value, never interpolated into shell source.
-6. If the prompt contains `upload to youtube` or `upload to you tube`
-   (case-insensitive), the launcher adds `--youtube` before the prompt.
+6. The UI sends explicit YouTube and cleanup options. When enabled, the
+   launcher adds `--youtube` before the prompt and appends
+   `. Perform cleanup after successful load.` to the prompt respectively.
 7. The VM runs one of these forms:
 
    ```bash

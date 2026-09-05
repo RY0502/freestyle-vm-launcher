@@ -334,6 +334,96 @@ a {
   opacity: 0.42;
 }
 
+.composer-options {
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 17px 2px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.toggle-option {
+  align-items: center;
+  background: rgba(245, 242, 234, 0.62);
+  border: 1px solid rgba(23, 24, 21, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-height: 55px;
+  padding: 9px 12px;
+  transition: border-color 180ms ease, background 180ms ease;
+}
+
+.toggle-option:has(input:checked) {
+  background: rgba(217, 255, 87, 0.2);
+  border-color: rgba(83, 101, 55, 0.45);
+}
+
+.toggle-option:has(input:disabled) {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.toggle-option input {
+  height: 1px;
+  opacity: 0;
+  position: absolute;
+  width: 1px;
+}
+
+.toggle-option input:focus-visible + .toggle-track {
+  outline: 3px solid var(--orange);
+  outline-offset: 3px;
+}
+
+.toggle-track {
+  background: rgba(23, 24, 21, 0.2);
+  border-radius: 99px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 3px;
+  transition: background 180ms ease;
+  width: 38px;
+}
+
+.toggle-track span {
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(23, 24, 21, 0.25);
+  height: 16px;
+  transform: translateX(0);
+  transition: transform 180ms ease;
+  width: 16px;
+}
+
+.toggle-option input:checked + .toggle-track {
+  background: var(--moss);
+}
+
+.toggle-option input:checked + .toggle-track span {
+  transform: translateX(16px);
+}
+
+.toggle-option strong,
+.toggle-option small {
+  display: block;
+}
+
+.toggle-option strong {
+  font-size: 12px;
+}
+
+.toggle-option small {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
 .button-arrow {
   align-items: center;
   background: var(--lime);
@@ -605,6 +695,10 @@ footer {
 
   .composer-footer button {
     width: 100%;
+  }
+
+  .composer-options {
+    flex-direction: column;
   }
 
   .example-list {
