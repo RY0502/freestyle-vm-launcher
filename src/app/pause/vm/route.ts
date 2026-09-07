@@ -1,4 +1,4 @@
-import { Freestyle, FreestyleApiError } from "freestyle";
+import { Freestyle, FreestyleApiError, type VmState } from "freestyle";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -6,6 +6,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 class ConfigurationError extends Error {}
+class VmPauseTimeoutError extends Error {}
+
+const MAX_PAUSE_ATTEMPTS = 3;
 
 type ServerConfig = {
   apiKey: string;
@@ -55,6 +58,64 @@ function getServerConfig(machineParam: string | null): ServerConfig {
   };
 }
 
+function uncachedFetch(input: RequestInfo | URL, init?: RequestInit) {
+  return fetch(input, { ...init, cache: "no-store" });
+}
+
+type PauseableVm = {
+  pause: () => Promise<{ state: VmState }>;
+};
+
+async function pauseWithRetry(vm: PauseableVm, machine: string, vmId: string) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_PAUSE_ATTEMPTS; attempt += 1) {
+    try {
+      return await vm.pause();
+    } catch (error) {
+      lastError = error;
+
+      if (attempt === MAX_PAUSE_ATTEMPTS) break;
+
+      console.warn("Freestyle pause attempt failed; retrying.", {
+        machine,
+        vmId,
+        attempt,
+        nextAttempt: attempt + 1,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+      await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+
+  throw lastError;
+}
+
+async function waitUntilPaused(
+  freestyle: Freestyle,
+  vmId: string,
+  initialState: VmState,
+) {
+  if (initialState === "paused") return;
+
+  const deadline = Date.now() + 25_000;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const current = await freestyle.vms.get(vmId);
+
+    if (current.state === "paused") return;
+
+    if (current.state !== "pausing") {
+      throw new VmPauseTimeoutError(
+        `VM entered the unexpected state "${current.state}".`,
+      );
+    }
+  }
+
+  throw new VmPauseTimeoutError("VM did not become paused in time.");
+}
+
 export async function GET(request: NextRequest) {
   let config: ServerConfig;
 
@@ -80,7 +141,10 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const freestyle = new Freestyle({ apiKey: config.apiKey });
+  const freestyle = new Freestyle({
+    apiKey: config.apiKey,
+    fetch: uncachedFetch,
+  });
   const vm = freestyle.vms.ref(config.vmId);
 
   try {
@@ -116,25 +180,48 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    if (current.state !== "running") {
+      console.info("Pause request rejected because VM is not running.", {
+        machine: config.machine,
+        vmId: config.vmId,
+        state: current.state,
+      });
+      return json(
+        {
+          message: "The VM is not running and cannot be paused right now.",
+          code: "VM_NOT_RUNNING",
+          state: current.state,
+        },
+        409,
+      );
+    }
+
     console.info("Pausing VM.", {
       machine: config.machine,
       vmId: config.vmId,
       state: current.state,
     });
-    const paused = await vm.pause();
-    console.info("VM pause request accepted.", {
+    const paused = await pauseWithRetry(vm, config.machine, config.vmId);
+    console.info("Freestyle pause call succeeded.", {
       machine: config.machine,
       vmId: config.vmId,
       state: paused.state,
     });
+    await waitUntilPaused(freestyle, config.vmId, paused.state);
+    const final = await freestyle.vms.get(config.vmId);
+    console.info("VM status after pause call succeeded.", {
+      machine: config.machine,
+      vmId: config.vmId,
+      state: final.state,
+    });
 
     return json(
       {
-        message: "The VM is being paused.",
-        code: "PAUSE_REQUESTED",
-        state: paused.state,
+        message: "The VM is paused.",
+        code: "PAUSED",
+        state: final.state,
       },
-      202,
+      200,
     );
   } catch (error) {
     if (error instanceof FreestyleApiError) {
@@ -151,6 +238,22 @@ export async function GET(request: NextRequest) {
           code: "FREESTYLE_ERROR",
         },
         502,
+      );
+    }
+
+    if (error instanceof VmPauseTimeoutError) {
+      console.error("Freestyle pause request did not reach paused state.", {
+        machine: config.machine,
+        vmId: config.vmId,
+        message: error.message,
+      });
+      return json(
+        {
+          message:
+            "The pause request was sent, but Freestyle did not confirm that the VM is paused yet.",
+          code: "PAUSE_NOT_CONFIRMED",
+        },
+        504,
       );
     }
 

@@ -141,10 +141,11 @@ ambiguous—the background task might already have started—so inspect the PID 
 log before retrying.
 
 To pause a configured VM through the app, send a GET request to
-`/pause/vm`. The endpoint checks the current state first, does nothing when the
-VM is already paused or pausing, and logs each decision. Add `?machine=1` or
-another positive machine number to select the corresponding suffixed variables,
-such as `FREESTYLE_API_KEY_1`, `FREESTYLE_VM_ID_1`, and
+`/pause/vm`. The endpoint checks the current state first, only sends `pause()`
+for a running VM, and polls until Freestyle confirms the terminal `paused`
+state. A VM that is already paused or pausing is left unchanged. Add
+`?machine=1` or another positive machine number to select the corresponding
+suffixed variables, such as `FREESTYLE_API_KEY_1`, `FREESTYLE_VM_ID_1`, and
 `FREESTYLE_TEAM_ID_1`. Without `machine`, it uses the unsuffixed variables.
 
 The pause endpoint does not require authentication. To start a numbered VM and
