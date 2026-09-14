@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type LaunchState =
   | { type: "idle" }
@@ -16,18 +16,30 @@ const EXAMPLES = [
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
+  const [latestPrompt, setLatestPrompt] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [youtube, setYoutube] = useState(false);
   const [cleanup, setCleanup] = useState(false);
   const [launchState, setLaunchState] = useState<LaunchState>({ type: "idle" });
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const trimmedPrompt = prompt.trim();
   const isLoading = launchState.type === "loading";
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!trimmedPrompt || isLoading) return;
 
+    const submittedPrompt = trimmedPrompt;
+    setLatestPrompt(submittedPrompt);
+    setPrompt("");
     setLaunchState({ type: "loading" });
 
     try {
@@ -35,7 +47,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: trimmedPrompt,
+          prompt: submittedPrompt,
           youtube,
           cleanup,
         }),
@@ -51,7 +63,6 @@ export default function Home() {
         type: "success",
         message: data.message ?? "Your render has been queued and is now running.",
       });
-      setPrompt("");
     } catch (error) {
       setLaunchState({
         type: "error",
@@ -65,7 +76,51 @@ export default function Home() {
 
   function selectExample(example: string) {
     setPrompt(example);
-    setLaunchState({ type: "idle" });
+    if (launchState.type !== "idle") setLaunchState({ type: "idle" });
+    textareaRef.current?.focus();
+  }
+
+  async function handleCopyPrompt() {
+    if (!latestPrompt) return;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(latestPrompt);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = latestPrompt;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+    } catch {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = latestPrompt;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setCopied(true);
+      } catch (err) {
+        console.error("Failed to copy prompt:", err);
+      }
+    }
+  }
+
+  function handleRetryPrompt() {
+    if (!latestPrompt) return;
+    setPrompt(latestPrompt);
+    if (launchState.type !== "idle") setLaunchState({ type: "idle" });
+    textareaRef.current?.focus();
+    textareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
   return (
@@ -110,6 +165,7 @@ export default function Home() {
           </div>
 
           <textarea
+            ref={textareaRef}
             id="prompt"
             name="prompt"
             value={prompt}
@@ -195,6 +251,57 @@ export default function Home() {
             )}
           </div>
         </form>
+
+        {latestPrompt && (
+          <div className="latest-prompt-card" aria-label="Latest submitted prompt">
+            <div className="latest-prompt-header">
+              <div className="latest-prompt-badge">
+                <span className="latest-prompt-indicator" aria-hidden="true" />
+                <span>Latest Prompt</span>
+              </div>
+              <div className="latest-prompt-actions">
+                <button
+                  type="button"
+                  className="latest-prompt-action-btn"
+                  onClick={handleCopyPrompt}
+                  title="Copy prompt to clipboard"
+                  aria-label={copied ? "Copied prompt" : "Copy prompt"}
+                >
+                  {copied ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                      <span>Copy</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="latest-prompt-action-btn latest-prompt-action-btn-retry"
+                  onClick={handleRetryPrompt}
+                  title="Load this prompt back into the composer to retry"
+                  aria-label="Retry this prompt"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                  <span>Retry prompt</span>
+                </button>
+              </div>
+            </div>
+            <p className="latest-prompt-content">{latestPrompt}</p>
+          </div>
+        )}
 
         <div className="examples" aria-label="Example prompts">
           <span className="examples-label">Try a direction</span>
