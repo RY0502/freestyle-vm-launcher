@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 type LaunchState =
   | { type: "idle" }
@@ -14,9 +14,75 @@ const EXAMPLES = [
   "A quiet, hand-drawn story about finding your way home",
 ];
 
+const STORAGE_KEY_PROMPT = "freestyle_vm_latest_prompt";
+const STORAGE_KEY_DEPLOY = "freestyle_vm_deploy_id";
+const CURRENT_DEPLOY_ID = process.env.NEXT_PUBLIC_DEPLOY_ID || "development";
+
+let promptListeners: Array<() => void> = [];
+
+function emitPromptChange() {
+  for (const listener of promptListeners) {
+    listener();
+  }
+}
+
+function subscribeToPrompt(listener: () => void) {
+  promptListeners.push(listener);
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY_PROMPT || event.key === STORAGE_KEY_DEPLOY) {
+      listener();
+    }
+  };
+  window.addEventListener("storage", handleStorage);
+  return () => {
+    promptListeners = promptListeners.filter((l) => l !== listener);
+    window.removeEventListener("storage", handleStorage);
+  };
+}
+
+function getPromptSnapshot(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const savedDeployId = localStorage.getItem(STORAGE_KEY_DEPLOY);
+
+    // If the app has been redeployed since this prompt was saved, clear it
+    if (savedDeployId && savedDeployId !== CURRENT_DEPLOY_ID) {
+      localStorage.removeItem(STORAGE_KEY_PROMPT);
+      localStorage.setItem(STORAGE_KEY_DEPLOY, CURRENT_DEPLOY_ID);
+      return null;
+    }
+
+    if (!savedDeployId) {
+      localStorage.setItem(STORAGE_KEY_DEPLOY, CURRENT_DEPLOY_ID);
+    }
+
+    return localStorage.getItem(STORAGE_KEY_PROMPT);
+  } catch {
+    return null;
+  }
+}
+
+function getPromptServerSnapshot(): string | null {
+  return null;
+}
+
+function saveLatestPrompt(newPrompt: string) {
+  try {
+    localStorage.setItem(STORAGE_KEY_PROMPT, newPrompt);
+    localStorage.setItem(STORAGE_KEY_DEPLOY, CURRENT_DEPLOY_ID);
+  } catch (err) {
+    console.error("Failed to save latest prompt to localStorage:", err);
+  }
+  emitPromptChange();
+}
+
 export default function Home() {
   const [prompt, setPrompt] = useState("");
-  const [latestPrompt, setLatestPrompt] = useState<string | null>(null);
+  const latestPrompt = useSyncExternalStore(
+    subscribeToPrompt,
+    getPromptSnapshot,
+    getPromptServerSnapshot
+  );
   const [copied, setCopied] = useState(false);
   const [youtube, setYoutube] = useState(false);
   const [cleanup, setCleanup] = useState(false);
@@ -38,7 +104,7 @@ export default function Home() {
     if (!trimmedPrompt || isLoading) return;
 
     const submittedPrompt = trimmedPrompt;
-    setLatestPrompt(submittedPrompt);
+    saveLatestPrompt(submittedPrompt);
     setPrompt("");
     setLaunchState({ type: "loading" });
 
