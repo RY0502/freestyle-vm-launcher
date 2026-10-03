@@ -76,6 +76,12 @@ function saveLatestPrompt(newPrompt: string) {
   emitPromptChange();
 }
 
+interface SelectedImage {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
+
 export default function Home() {
   const [prompt, setPrompt] = useState("");
   const latestPrompt = useSyncExternalStore(
@@ -86,8 +92,13 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [youtube, setYoutube] = useState(false);
   const [cleanup, setCleanup] = useState(false);
+  const [images, setImages] = useState<SelectedImage[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [launchState, setLaunchState] = useState<LaunchState>({ type: "idle" });
+
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const trimmedPrompt = prompt.trim();
   const isLoading = launchState.type === "loading";
@@ -98,6 +109,82 @@ export default function Home() {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  // Clean up object URLs on component unmount
+  const imagesRef = useRef(images);
+  useEffect(() => {
+    imagesRef.current = images;
+  }, [images]);
+
+  useEffect(() => {
+    return () => {
+      imagesRef.current.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+    };
+  }, []);
+
+  function handleAddFiles(fileList: FileList | File[]) {
+    const rawFiles = Array.from(fileList);
+    const validImageFiles = rawFiles.filter(
+      (f) =>
+        f.type.startsWith("image/") ||
+        /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(f.name)
+    );
+
+    if (validImageFiles.length === 0) {
+      setFileNotice("Please select valid image files (PNG, JPG, WEBP, GIF, etc.).");
+      return;
+    }
+
+    setImages((prev) => {
+      const remainingSlots = 5 - prev.length;
+      if (remainingSlots <= 0) {
+        setFileNotice("Maximum 5 images allowed. Remove some to add more.");
+        return prev;
+      }
+
+      if (validImageFiles.length > remainingSlots) {
+        setFileNotice(
+          `Added ${remainingSlots} image${remainingSlots > 1 ? "s" : ""}. Maximum is 5 images.`
+        );
+      } else {
+        setFileNotice(null);
+      }
+
+      const accepted = validImageFiles.slice(0, remainingSlots);
+      const newItems: SelectedImage[] = accepted.map((file) => ({
+        id: `${file.name}-${file.lastModified}-${Math.random()}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+
+      return [...prev, ...newItems];
+    });
+  }
+
+  function handleRemoveImage(index: number) {
+    setImages((prev) => {
+      const target = prev[index];
+      if (target) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+    setFileNotice(null);
+  }
+
+  function handleClearAllImages() {
+    setImages((prev) => {
+      prev.forEach((img) => URL.revokeObjectURL(img.previewUrl));
+      return [];
+    });
+    setFileNotice(null);
+  }
+
+  function formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -105,18 +192,20 @@ export default function Home() {
 
     const submittedPrompt = trimmedPrompt;
     saveLatestPrompt(submittedPrompt);
-    setPrompt("");
     setLaunchState({ type: "loading" });
 
     try {
+      const formData = new FormData();
+      formData.append("prompt", submittedPrompt);
+      formData.append("youtube", String(youtube));
+      formData.append("cleanup", String(cleanup));
+      for (const img of images) {
+        formData.append("images", img.file);
+      }
+
       const response = await fetch("/api/launch", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: submittedPrompt,
-          youtube,
-          cleanup,
-        }),
+        body: formData,
       });
 
       const data = (await response.json()) as { message?: string };
@@ -125,6 +214,8 @@ export default function Home() {
         throw new Error(data.message ?? "We couldn’t start the render. Please try again.");
       }
 
+      handleClearAllImages();
+      setPrompt("");
       setLaunchState({
         type: "success",
         message: data.message ?? "Your render has been queued and is now running.",
@@ -247,6 +338,148 @@ export default function Home() {
             required
           />
 
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => {
+              if (e.target.files && e.target.files.length > 0) {
+                handleAddFiles(e.target.files);
+                e.target.value = "";
+              }
+            }}
+            disabled={isLoading}
+          />
+
+          {/* Reference images section */}
+          <div className="composer-images">
+            {images.length === 0 ? (
+              <div
+                className={`composer-upload-trigger ${isDragOver ? "is-dragover" : ""}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => fileInputRef.current?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    fileInputRef.current?.click();
+                  }
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(true);
+                }}
+                onDragLeave={() => setIsDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOver(false);
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    handleAddFiles(e.dataTransfer.files);
+                  }
+                }}
+                aria-label="Upload reference images (up to 5)"
+              >
+                <div className="composer-upload-info">
+                  <div className="composer-upload-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
+                    </svg>
+                  </div>
+                  <div className="composer-upload-text">
+                    <strong>Reference images</strong>
+                    <small>Add up to 5 visual reference images (PNG, JPG, WEBP)</small>
+                  </div>
+                </div>
+                <div className="composer-upload-badge">
+                  + Add images (0/5)
+                </div>
+              </div>
+            ) : (
+              <div className="composer-images-panel">
+                <div className="composer-images-header">
+                  <div className="composer-images-title">
+                    <span>Reference Images</span>
+                    <span className="composer-images-count">{images.length}/5</span>
+                  </div>
+                  <button
+                    type="button"
+                    className="composer-images-clear"
+                    onClick={handleClearAllImages}
+                    disabled={isLoading}
+                  >
+                    Clear all
+                  </button>
+                </div>
+
+                <div className="composer-images-grid">
+                  {images.map((item, idx) => (
+                    <div key={item.id} className="image-preview-card">
+                      <span className="image-badge">#{idx + 1}</span>
+                      <button
+                        type="button"
+                        className="image-remove-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemoveImage(idx);
+                        }}
+                        title={`Remove ${item.file.name}`}
+                        aria-label={`Remove image ${idx + 1}`}
+                        disabled={isLoading}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={item.previewUrl}
+                        alt={item.file.name}
+                        className="image-preview-thumb"
+                      />
+                      <div className="image-info-bar" title={`${item.file.name} (${formatFileSize(item.file.size)})`}>
+                        {item.file.name} ({formatFileSize(item.file.size)})
+                      </div>
+                    </div>
+                  ))}
+
+                  {images.length < 5 && (
+                    <button
+                      type="button"
+                      className="image-add-slot"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isLoading}
+                      title="Add more reference images"
+                      aria-label="Add more reference images"
+                    >
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                      <span>Add ({5 - images.length})</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {fileNotice && (
+              <div className="composer-images-notice" role="alert">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>{fileNotice}</span>
+              </div>
+            )}
+          </div>
+
           <div className="composer-footer">
             <p id="prompt-help">
               Include mood, pacing, and visual style. Add “upload to YouTube”
@@ -256,7 +489,7 @@ export default function Home() {
               {isLoading ? (
                 <>
                   <span className="spinner" aria-hidden="true" />
-                  Waking studio
+                  {images.length > 0 ? "Uploading & launching" : "Waking studio"}
                 </>
               ) : (
                 <>
