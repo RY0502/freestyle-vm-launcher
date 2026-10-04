@@ -75,6 +75,7 @@ type ServerConfig = {
 
 class ConfigurationError extends Error { }
 class VmStartTimeoutError extends Error { }
+class GuestNotReadyError extends Error { }
 
 function json(
   body: Record<string, unknown>,
@@ -215,6 +216,59 @@ async function waitUntilRunning(
   }
 
   throw new VmStartTimeoutError("VM did not become ready in time.");
+}
+
+async function waitUntilGuestReady(
+  vm: ReturnType<Freestyle["vms"]["ref"]>,
+  timeoutMs = 45_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  while (Date.now() < deadline) {
+    try {
+      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()));
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
+  throw new GuestNotReadyError(
+    `VM guest agent did not become ready within ${Math.round(timeoutMs / 1000)}s: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+async function execWithRetry(
+  vm: ReturnType<Freestyle["vms"]["ref"]>,
+  options: Parameters<ReturnType<Freestyle["vms"]["ref"]>["exec"]>[0],
+  maxRetries = 3,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await vm.exec(options);
+    } catch (err) {
+      lastError = err;
+      const is502 =
+        err instanceof FreestyleApiError &&
+        (err.status === 502 || err.code === "INTERNAL_ERROR");
+      if (is502 && attempt < maxRetries) {
+        console.warn(
+          `vm.exec received 502, retrying in 3s (attempt ${attempt}/${maxRetries})...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 export async function POST(request: NextRequest) {
@@ -418,7 +472,9 @@ export async function POST(request: NextRequest) {
       userPromptWithReferences = `${validatedPrompt.value}\n\n${referenceBlock}`;
     }
 
-    const result = await vm.exec({
+    await waitUntilGuestReady(vm);
+
+    const result = await execWithRetry(vm, {
       command: REMOTE_LAUNCH_COMMAND,
       env: {
         PROJECT_DIR: config.projectDir,
@@ -508,6 +564,18 @@ export async function POST(request: NextRequest) {
           message:
             "The VM is still starting. Check its status before trying again.",
           code: "VM_START_TIMEOUT",
+        },
+        504,
+      );
+    }
+
+    if (error instanceof GuestNotReadyError) {
+      console.error("VM guest agent timed out.");
+      return json(
+        {
+          message:
+            "The VM started but its internal guest services took too long to initialize. Please try again shortly.",
+          code: "GUEST_NOT_READY",
         },
         504,
       );

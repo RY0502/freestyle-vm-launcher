@@ -40,6 +40,7 @@ printf '%s\n' "$pid"
 
 class ConfigurationError extends Error {}
 class VmStartTimeoutError extends Error {}
+class GuestNotReadyError extends Error {}
 
 type ServerConfig = {
   apiKey: string;
@@ -113,10 +114,6 @@ function getServerConfig(machineParam: string | null): ServerConfig {
   };
 }
 
-function isActiveState(state: VmState) {
-  return state === "running" || state === "starting" || state === "pausing";
-}
-
 async function waitUntilRunning(
   freestyle: Freestyle,
   vmId: string,
@@ -140,6 +137,60 @@ async function waitUntilRunning(
   }
 
   throw new VmStartTimeoutError("VM did not become ready in time.");
+}
+
+async function waitUntilGuestReady(
+  vm: ReturnType<Freestyle["vms"]["ref"]>,
+  timeoutMs = 45_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+
+  // Brief initial wait for CPU cycles to resume
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  while (Date.now() < deadline) {
+    try {
+      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()));
+      return;
+    } catch (err) {
+      lastError = err;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
+  throw new GuestNotReadyError(
+    `VM guest agent did not become ready within ${Math.round(timeoutMs / 1000)}s: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+async function execWithRetry(
+  vm: ReturnType<Freestyle["vms"]["ref"]>,
+  options: Parameters<ReturnType<Freestyle["vms"]["ref"]>["exec"]>[0],
+  maxRetries = 3,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await vm.exec(options);
+    } catch (err) {
+      lastError = err;
+      const is502 =
+        err instanceof FreestyleApiError &&
+        (err.status === 502 || err.code === "INTERNAL_ERROR");
+      if (is502 && attempt < maxRetries) {
+        console.warn(
+          `vm.exec received 502, retrying in 3s (attempt ${attempt}/${maxRetries})...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError;
 }
 
 export async function GET(request: NextRequest) {
@@ -175,34 +226,43 @@ export async function GET(request: NextRequest) {
       state: current.state,
     });
 
-    if (isActiveState(current.state)) {
-      console.info("Start request made no change; VM is already active.", {
+    if (current.state === "pausing") {
+      return json(
+        {
+          message:
+            "The VM is currently pausing. Please wait a moment and try again.",
+          code: "VM_PAUSING",
+          state: current.state,
+        },
+        409,
+        { "Retry-After": "10" },
+      );
+    }
+
+    if (current.state === "starting") {
+      console.info("VM is starting, waiting until running.", {
+        machine: config.machine,
+        vmId: config.vmId,
+      });
+      await waitUntilRunning(freestyle, config.vmId, current.state);
+    } else if (current.state !== "running") {
+      console.info("Starting VM.", {
         machine: config.machine,
         vmId: config.vmId,
         state: current.state,
       });
-      return json(
-        {
-          message:
-            current.state === "running"
-              ? "The VM is already running."
-              : "The VM is already starting.",
-          code: current.state === "running" ? "ALREADY_RUNNING" : "START_IN_PROGRESS",
-          state: current.state,
-        },
-        200,
-      );
+      const started = await vm.start();
+      await waitUntilRunning(freestyle, config.vmId, started.state);
+    } else {
+      console.info("VM is already running. Ensuring guest agent readiness and process.", {
+        machine: config.machine,
+        vmId: config.vmId,
+      });
     }
 
-    console.info("Starting VM.", {
-      machine: config.machine,
-      vmId: config.vmId,
-      state: current.state,
-    });
-    const started = await vm.start();
-    await waitUntilRunning(freestyle, config.vmId, started.state);
+    await waitUntilGuestReady(vm);
 
-    const result = await vm.exec({
+    const result = await execWithRetry(vm, {
       command: REMOTE_START_COMMAND,
       env: { PROJECT_DIR: config.projectDir },
       linuxUser: config.linuxUser,
@@ -281,6 +341,21 @@ export async function GET(request: NextRequest) {
         {
           message: "The VM is still starting. Check its status before retrying.",
           code: "VM_START_TIMEOUT",
+        },
+        504,
+      );
+    }
+
+    if (error instanceof GuestNotReadyError) {
+      console.error("VM guest agent timed out.", {
+        machine: config.machine,
+        vmId: config.vmId,
+      });
+      return json(
+        {
+          message:
+            "The VM is running but its internal guest services took too long to initialize. Please try again shortly.",
+          code: "GUEST_NOT_READY",
         },
         504,
       );
