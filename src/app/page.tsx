@@ -203,7 +203,11 @@ export default function Home() {
         formData.append("images", img.file);
       }
 
-      const response = await fetch("/api/launch", {
+      const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+      const machine = searchParams?.get("machine");
+      const launchUrl = machine ? `/api/launch?machine=${encodeURIComponent(machine)}` : "/api/launch";
+
+      const response = await fetch(launchUrl, {
         method: "POST",
         body: formData,
       });

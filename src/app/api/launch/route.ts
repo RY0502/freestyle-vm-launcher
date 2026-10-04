@@ -69,6 +69,7 @@ type ServerConfig = {
   vmId: string;
   teamId: string;
   projectDir: string;
+  machine: string;
   allowedOrigin?: string;
   linuxUser?: string;
 };
@@ -91,20 +92,30 @@ function json(
   });
 }
 
-function getServerConfig(): ServerConfig {
-  const apiKey = process.env.FREESTYLE_API_KEY?.trim();
-  const vmId = process.env.FREESTYLE_VM_ID?.trim();
-  const teamId = process.env.FREESTYLE_TEAM_ID?.trim();
+function getServerConfig(machineParam?: string | null): ServerConfig {
+  const machine = machineParam?.trim() ?? "";
+
+  if (machine && !/^[1-9]\d*$/.test(machine)) {
+    throw new ConfigurationError(
+      "machine must be a positive integer, such as 1 or 2.",
+    );
+  }
+
+  const suffix = machine ? `_${machine}` : "";
+  const apiKey = process.env[`FREESTYLE_API_KEY${suffix}`]?.trim();
+  const vmId = process.env[`FREESTYLE_VM_ID${suffix}`]?.trim();
+  const teamId = process.env[`FREESTYLE_TEAM_ID${suffix}`]?.trim();
   const projectDir =
-    process.env.FREESTYLE_PROJECT_DIR?.trim() ??
+    process.env[`FREESTYLE_PROJECT_DIR${suffix}`]?.trim() ||
+    process.env.FREESTYLE_PROJECT_DIR?.trim() ||
     "/home/ubuntu/freeai-video-deepagent";
   const allowedOrigin = process.env.APP_ORIGIN?.trim().replace(/\/$/, "");
   const linuxUser = process.env.FREESTYLE_LINUX_USER?.trim();
 
   const missing = [
-    !apiKey && "FREESTYLE_API_KEY",
-    !vmId && "FREESTYLE_VM_ID",
-    !teamId && "FREESTYLE_TEAM_ID",
+    !apiKey && `FREESTYLE_API_KEY${suffix}`,
+    !vmId && `FREESTYLE_VM_ID${suffix}`,
+    !teamId && `FREESTYLE_TEAM_ID${suffix}`,
     !process.env.SUPABASE_URL && "SUPABASE_URL",
     !process.env.SUPABASE_SERVICE_ROLE_KEY && "SUPABASE_SERVICE_ROLE_KEY",
   ].filter(Boolean);
@@ -132,6 +143,7 @@ function getServerConfig(): ServerConfig {
     apiKey: apiKey!,
     vmId: vmId!,
     teamId: teamId!,
+    machine: machine || "default",
     projectDir,
     allowedOrigin,
     linuxUser,
@@ -177,9 +189,6 @@ function validatePrompt(prompt: unknown) {
   return { value } as const;
 }
 
-function isBusyState(state: VmState) {
-  return state === "running" || state === "starting" || state === "pausing";
-}
 
 function validateOption(value: unknown, name: string) {
   if (typeof value !== "boolean") {
@@ -220,20 +229,23 @@ async function waitUntilRunning(
 
 async function waitUntilGuestReady(
   vm: ReturnType<Freestyle["vms"]["ref"]>,
-  timeoutMs = 45_000,
+  timeoutMs = 50_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
 
+  // Brief initial wait for CPU cycles to resume
   await new Promise((resolve) => setTimeout(resolve, 1500));
 
   while (Date.now() < deadline) {
     try {
-      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()));
+      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()), {
+        signal: AbortSignal.timeout(3500),
+      });
       return;
     } catch (err) {
       lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
 
@@ -286,7 +298,8 @@ export async function POST(request: NextRequest) {
   let config: ServerConfig;
 
   try {
-    config = getServerConfig();
+    const machineParam = request.nextUrl.searchParams.get("machine");
+    config = getServerConfig(machineParam);
   } catch (error) {
     console.error(
       "Launch route configuration error:",
@@ -403,30 +416,44 @@ export async function POST(request: NextRequest) {
   try {
     const current = await freestyle.vms.get(config.vmId);
 
-    if (isBusyState(current.state)) {
-      return json(
-        { message: BUSY_MESSAGE, code: "VM_BUSY" },
-        409,
-        { "Retry-After": "30" },
-      );
-    }
-
-    if (current.state !== "paused") {
+    if (current.state === "pausing") {
       return json(
         {
           message:
-            "The VM is not paused and cannot accept a new task right now.",
-          code: "VM_NOT_PAUSED",
+            "The VM is currently pausing. Please wait a moment and try again.",
+          code: "VM_PAUSING",
+          state: current.state,
         },
         409,
-        { "Retry-After": "30" },
+        { "Retry-After": "10" },
       );
     }
 
     const vm = freestyle.vms.ref(config.vmId);
-    const started = await vm.start();
 
-    await waitUntilRunning(freestyle, config.vmId, started.state);
+    if (current.state === "starting") {
+      console.info("VM is starting, waiting until running.", {
+        machine: config.machine,
+        vmId: config.vmId,
+      });
+      await waitUntilRunning(freestyle, config.vmId, current.state);
+    } else if (current.state !== "running") {
+      console.info("Starting VM.", {
+        machine: config.machine,
+        vmId: config.vmId,
+        state: current.state,
+      });
+      const started = await vm.start();
+      await waitUntilRunning(freestyle, config.vmId, started.state);
+    } else {
+      console.info(
+        "VM is already running. Ensuring guest agent readiness and process.",
+        {
+          machine: config.machine,
+          vmId: config.vmId,
+        },
+      );
+    }
 
     // 1. Clear existing image files in Supabase 'input' directory at each submission request
     try {
@@ -570,11 +597,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (error instanceof GuestNotReadyError) {
-      console.error("VM guest agent timed out.");
+      console.error("VM guest agent timed out:", error.message, {
+        machine: config.machine,
+        vmId: config.vmId,
+      });
       return json(
         {
           message:
-            "The VM started but its internal guest services took too long to initialize. Please try again shortly.",
+            "The VM is running but its internal guest services took too long to initialize. Please try clicking 'Start creating' again shortly.",
           code: "GUEST_NOT_READY",
         },
         504,

@@ -141,7 +141,7 @@ async function waitUntilRunning(
 
 async function waitUntilGuestReady(
   vm: ReturnType<Freestyle["vms"]["ref"]>,
-  timeoutMs = 45_000,
+  timeoutMs = 50_000,
 ) {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
@@ -151,11 +151,13 @@ async function waitUntilGuestReady(
 
   while (Date.now() < deadline) {
     try {
-      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()));
+      await vm.fs.writeTextFile("/tmp/.guest_ready_probe", String(Date.now()), {
+        signal: AbortSignal.timeout(3500),
+      });
       return;
     } catch (err) {
       lastError = err;
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }
 
@@ -350,6 +352,7 @@ export async function GET(request: NextRequest) {
       console.error("VM guest agent timed out.", {
         machine: config.machine,
         vmId: config.vmId,
+        details: error.message,
       });
       return json(
         {
