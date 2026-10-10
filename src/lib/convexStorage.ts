@@ -14,10 +14,18 @@ export interface ConvexStorageConfig {
 
 function formatAuthHeader(key: string): string {
   const trimmed = key.trim();
-  if (trimmed.startsWith('Bearer ') || trimmed.startsWith('DeployKey ')) {
+  if (trimmed.startsWith('Convex ') || trimmed.startsWith('Bearer ')) {
     return trimmed;
   }
-  return `Bearer ${trimmed}`;
+  if (trimmed.startsWith('DeployKey ')) {
+    return `Convex ${trimmed.slice('DeployKey '.length).trim()}`;
+  }
+  // If key is a 3-part dot-separated JWT, format as Bearer token
+  if (trimmed.split('.').length === 3) {
+    return `Bearer ${trimmed}`;
+  }
+  // Deploy keys (prod:..., dev:...) require the 'Convex ' prefix
+  return `Convex ${trimmed}`;
 }
 
 export function getConvexConfig(): ConvexStorageConfig {
