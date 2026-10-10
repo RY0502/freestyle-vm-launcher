@@ -5,7 +5,7 @@ import {
   formatReferenceUrls,
   uploadInputImages,
   type UploadedImageInput,
-} from "@/lib/supabaseStorage";
+} from "@/lib/convexStorage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -455,36 +455,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Clear existing image files in Supabase 'input' directory at each submission request
+    // 1. Clear existing image files in Convex 'input' directory at each submission request
     try {
       await clearExistingInputFiles();
     } catch (clearError) {
-      console.error("Failed to clear Supabase input directory:", clearError);
+      console.error("Failed to clear Convex input directory:", clearError);
       return json(
         {
           message:
             clearError instanceof Error
               ? clearError.message
-              : "Failed to clear existing files in Supabase storage.",
+              : "Failed to clear existing files in Convex storage.",
           code: "STORAGE_CLEAR_FAILED",
         },
         502,
       );
     }
 
-    // 2. If uploaded images are there, upload to 'input' directory in the Supabase bucket
+    // 2. If uploaded images are there, upload to 'input' directory in the Convex bucket
     let referenceUrls: string[] = [];
     if (imagesToUpload.length > 0) {
       try {
         referenceUrls = await uploadInputImages(imagesToUpload);
       } catch (uploadError) {
-        console.error("Failed to upload images to Supabase storage:", uploadError);
+        console.error("Failed to upload images to Convex storage:", uploadError);
         return json(
           {
             message:
               uploadError instanceof Error
                 ? uploadError.message
-                : "Failed to upload reference images to Supabase storage.",
+                : "Failed to upload reference images to Convex storage.",
             code: "STORAGE_UPLOAD_FAILED",
           },
           502,
