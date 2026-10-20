@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { compressImage } from './imageCompressor';
 
 export interface UploadedImageInput {
   name: string;
@@ -121,13 +122,30 @@ export async function uploadInputImages(
 
   for (let i = 0; i < images.length; i++) {
     const image = images[i];
+    let imageBuffer = Buffer.isBuffer(image.data)
+      ? image.data
+      : Buffer.from(image.data);
     const originalName = image.name || `image_${i + 1}.png`;
-    const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const targetFileName = `${i + 1}_${sanitizedName}`;
-    const objectKey = `input/${targetFileName}`;
-    const contentType = image.type && image.type.startsWith('image/')
+    let sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    let contentType = image.type && image.type.startsWith('image/')
       ? image.type
       : 'image/png';
+
+    // Compress using FFmpeg adaptive 256-color palette + downscale (same mechanism as content-generator-video)
+    const compressedBuffer = compressImage(imageBuffer);
+    if (compressedBuffer.length < imageBuffer.length) {
+      console.log(
+        `[convexStorage] Compressed "${originalName}" from ${imageBuffer.length} bytes to ${compressedBuffer.length} bytes (${((1 - compressedBuffer.length / imageBuffer.length) * 100).toFixed(1)}% reduction)`
+      );
+      imageBuffer = compressedBuffer;
+      contentType = 'image/png';
+      if (!sanitizedName.toLowerCase().endsWith('.png')) {
+        sanitizedName = sanitizedName.replace(/\.[^/.]+$/, '') + '.png';
+      }
+    }
+
+    const targetFileName = `${i + 1}_${sanitizedName}`;
+    const objectKey = `input/${targetFileName}`;
 
     // 1. Generate upload URL via mutation files:generateUploadUrl
     const genUrlResponse = await fetch(mutationUrl, {
@@ -165,7 +183,7 @@ export async function uploadInputImages(
       headers: {
         'content-type': contentType,
       },
-      body: new Uint8Array(image.data),
+      body: new Uint8Array(imageBuffer),
     });
 
     if (!uploadResponse.ok) {
@@ -182,7 +200,7 @@ export async function uploadInputImages(
     }
 
     // 3. Save file metadata in storedFiles table
-    const sha256 = crypto.createHash('sha256').update(Buffer.from(image.data)).digest('hex');
+    const sha256 = crypto.createHash('sha256').update(imageBuffer).digest('hex');
     const saveResponse = await fetch(mutationUrl, {
       method: 'POST',
       headers: authHeaders,
@@ -194,7 +212,7 @@ export async function uploadInputImages(
           path: objectKey,
           fileName: sanitizedName,
           contentType,
-          size: image.data.length,
+          size: imageBuffer.length,
           sha256,
         },
         format: 'json',
@@ -237,3 +255,5 @@ export function formatReferenceUrls(urls: string[]): string {
   if (urls.length === 0) return '';
   return `Reference urls:\n${urls.join('\n')}`;
 }
+
+export { compressImage, compressPortraitImage } from './imageCompressor';
