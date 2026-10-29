@@ -14,6 +14,39 @@ export const maxDuration = 60;
 const BUSY_MESSAGE =
   "The VM is already running. Try back again in some time.";
 
+const REMOTE_DEV_COMMAND = String.raw`
+set -u
+cd "$PROJECT_DIR" || exit 72
+umask 077
+mkdir -p .run
+exec 9>.run/dev.lock
+/usr/bin/flock -n 9 || {
+  printf 'ALREADY_RUNNING\n' >&2
+  exit 75
+}
+
+old_pid=""
+if [ -s .run/dev.pid ]; then
+  old_pid="$(cat .run/dev.pid 2>/dev/null || true)"
+fi
+
+case "$old_pid" in
+  ""|*[!0-9]*)
+    ;;
+  *)
+    if kill -0 "$old_pid" 2>/dev/null; then
+      printf 'ALREADY_RUNNING\n' >&2
+      exit 75
+    fi
+    ;;
+esac
+
+nohup /usr/local/bin/npm run dev >>.run/dev.log 2>&1 </dev/null 9>&9 &
+pid=$!
+printf '%s\n' "$pid" >.run/dev.pid
+printf '%s\n' "$pid"
+`.trim();
+
 const REMOTE_LAUNCH_COMMAND = String.raw`
 set -u
 cd "$PROJECT_DIR" || exit 72
@@ -112,12 +145,14 @@ function getServerConfig(machineParam?: string | null): ServerConfig {
   const allowedOrigin = process.env.APP_ORIGIN?.trim().replace(/\/$/, "");
   const linuxUser = process.env.FREESTYLE_LINUX_USER?.trim();
 
+  const isMachine1 = machine === "1";
+
   const missing = [
     !apiKey && `FREESTYLE_API_KEY${suffix}`,
     !vmId && `FREESTYLE_VM_ID${suffix}`,
     !teamId && `FREESTYLE_TEAM_ID${suffix}`,
-    !process.env.SUPABASE_URL && "SUPABASE_URL",
-    !process.env.SUPABASE_SERVICE_ROLE_KEY && "SUPABASE_SERVICE_ROLE_KEY",
+    !isMachine1 && !process.env.SUPABASE_URL && "SUPABASE_URL",
+    !isMachine1 && !process.env.SUPABASE_SERVICE_ROLE_KEY && "SUPABASE_SERVICE_ROLE_KEY",
   ].filter(Boolean);
 
   if (missing.length > 0) {
@@ -320,92 +355,98 @@ export async function POST(request: NextRequest) {
   let rawCleanup: unknown;
   const imagesToUpload: UploadedImageInput[] = [];
 
-  if (isMultipart) {
-    try {
-      const formData = await request.formData();
-      rawPrompt = formData.get("prompt");
-      const ytVal = formData.get("youtube");
-      rawYoutube = ytVal === "true" || ytVal === "1";
-      const cleanVal = formData.get("cleanup");
-      rawCleanup = cleanVal === "true" || cleanVal === "1";
+  let userPromptWithReferences = "";
+  let referenceUrls: string[] = [];
+  const isMachine1 = config.machine === "1";
 
-      const rawFiles = [
-        ...formData.getAll("images"),
-        ...formData.getAll("files"),
-      ];
+  if (!isMachine1) {
+    if (isMultipart) {
+      try {
+        const formData = await request.formData();
+        rawPrompt = formData.get("prompt");
+        const ytVal = formData.get("youtube");
+        rawYoutube = ytVal === "true" || ytVal === "1";
+        const cleanVal = formData.get("cleanup");
+        rawCleanup = cleanVal === "true" || cleanVal === "1";
 
-      const files = rawFiles.filter(
-        (f) => f instanceof File && f.size > 0
-      ) as File[];
+        const rawFiles = [
+          ...formData.getAll("images"),
+          ...formData.getAll("files"),
+        ];
 
-      if (files.length > 5) {
-        return json({ message: "You can upload a maximum of 5 images." }, 400);
-      }
+        const files = rawFiles.filter(
+          (f) => f instanceof File && f.size > 0
+        ) as File[];
 
-      for (const file of files) {
-        if (
-          !file.type.startsWith("image/") &&
-          !file.name.match(/\.(jpe?g|png|webp|gif|bmp|avif)$/i)
-        ) {
-          return json(
-            { message: `File "${file.name}" is not a supported image file.` },
-            400
-          );
+        if (files.length > 5) {
+          return json({ message: "You can upload a maximum of 5 images." }, 400);
         }
-        const buffer = Buffer.from(await file.arrayBuffer());
-        imagesToUpload.push({
-          name: file.name,
-          type: file.type || "image/png",
-          data: buffer,
-        });
-      }
-    } catch {
-      return json({ message: "Failed to parse multipart form data." }, 400);
-    }
-  } else {
-    let body: LaunchRequestBody;
-    try {
-      body = (await request.json()) as LaunchRequestBody;
-    } catch {
-      return json({ message: "The request body must be valid JSON." }, 400);
-    }
 
-    rawPrompt = body.prompt;
-    rawYoutube = body.youtube;
-    rawCleanup = body.cleanup;
-
-    if (Array.isArray(body.images)) {
-      if (body.images.length > 5) {
-        return json({ message: "You can upload a maximum of 5 images." }, 400);
-      }
-      for (const item of body.images) {
-        if (item && typeof item === "object" && "base64" in item) {
-          const imgObj = item as { name?: string; type?: string; base64: string };
+        for (const file of files) {
+          if (
+            !file.type.startsWith("image/") &&
+            !file.name.match(/\.(jpe?g|png|webp|gif|bmp|avif)$/i)
+          ) {
+            return json(
+              { message: `File "${file.name}" is not a supported image file.` },
+              400
+            );
+          }
+          const buffer = Buffer.from(await file.arrayBuffer());
           imagesToUpload.push({
-            name: imgObj.name || `image_${imagesToUpload.length + 1}.png`,
-            type: imgObj.type || "image/png",
-            data: Buffer.from(imgObj.base64, "base64"),
+            name: file.name,
+            type: file.type || "image/png",
+            data: buffer,
           });
         }
+      } catch {
+        return json({ message: "Failed to parse multipart form data." }, 400);
+      }
+    } else {
+      let body: LaunchRequestBody;
+      try {
+        body = (await request.json()) as LaunchRequestBody;
+      } catch {
+        return json({ message: "The request body must be valid JSON." }, 400);
+      }
+
+      rawPrompt = body.prompt;
+      rawYoutube = body.youtube;
+      rawCleanup = body.cleanup;
+
+      if (Array.isArray(body.images)) {
+        if (body.images.length > 5) {
+          return json({ message: "You can upload a maximum of 5 images." }, 400);
+        }
+        for (const item of body.images) {
+          if (item && typeof item === "object" && "base64" in item) {
+            const imgObj = item as { name?: string; type?: string; base64: string };
+            imagesToUpload.push({
+              name: imgObj.name || `image_${imagesToUpload.length + 1}.png`,
+              type: imgObj.type || "image/png",
+              data: Buffer.from(imgObj.base64, "base64"),
+            });
+          }
+        }
       }
     }
-  }
 
-  const validatedPrompt = validatePrompt(rawPrompt);
+    const validatedPrompt = validatePrompt(rawPrompt);
 
-  if ("error" in validatedPrompt) {
-    return json({ message: validatedPrompt.error }, 400);
-  }
+    if ("error" in validatedPrompt) {
+      return json({ message: validatedPrompt.error }, 400);
+    }
 
-  const validatedYoutube = validateOption(rawYoutube, "youtube");
-  const validatedCleanup = validateOption(rawCleanup, "cleanup");
+    const validatedYoutube = validateOption(rawYoutube, "youtube");
+    const validatedCleanup = validateOption(rawCleanup, "cleanup");
 
-  if ("error" in validatedYoutube) {
-    return json({ message: validatedYoutube.error }, 400);
-  }
+    if ("error" in validatedYoutube) {
+      return json({ message: validatedYoutube.error }, 400);
+    }
 
-  if ("error" in validatedCleanup) {
-    return json({ message: validatedCleanup.error }, 400);
+    if ("error" in validatedCleanup) {
+      return json({ message: validatedCleanup.error }, 400);
+    }
   }
 
   const freestyle = new Freestyle({
@@ -455,63 +496,73 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 1. Clear existing image files in Convex 'input' directory at each submission request
-    try {
-      await clearExistingInputFiles();
-    } catch (clearError) {
-      console.error("Failed to clear Convex input directory:", clearError);
-      return json(
-        {
-          message:
-            clearError instanceof Error
-              ? clearError.message
-              : "Failed to clear existing files in Convex storage.",
-          code: "STORAGE_CLEAR_FAILED",
-        },
-        502,
-      );
-    }
-
-    // 2. If uploaded images are there, upload to 'input' directory in the Convex bucket
-    let referenceUrls: string[] = [];
-    if (imagesToUpload.length > 0) {
+    if (!isMachine1) {
+      // 1. Clear existing image files in Convex 'input' directory at each submission request
       try {
-        referenceUrls = await uploadInputImages(imagesToUpload);
-      } catch (uploadError) {
-        console.error("Failed to upload images to Convex storage:", uploadError);
+        await clearExistingInputFiles();
+      } catch (clearError) {
+        console.error("Failed to clear Convex input directory:", clearError);
         return json(
           {
             message:
-              uploadError instanceof Error
-                ? uploadError.message
-                : "Failed to upload reference images to Convex storage.",
-            code: "STORAGE_UPLOAD_FAILED",
+              clearError instanceof Error
+                ? clearError.message
+                : "Failed to clear existing files in Convex storage.",
+            code: "STORAGE_CLEAR_FAILED",
           },
           502,
         );
       }
-    }
 
-    // 3. Append reference URLs before the perform cleanup text of the prompt
-    let userPromptWithReferences = validatedPrompt.value;
-    if (referenceUrls.length > 0) {
-      const referenceBlock = formatReferenceUrls(referenceUrls);
-      userPromptWithReferences = `${validatedPrompt.value}\n\n${referenceBlock}`;
+      // 2. If uploaded images are there, upload to 'input' directory in the Convex bucket
+      if (imagesToUpload.length > 0) {
+        try {
+          referenceUrls = await uploadInputImages(imagesToUpload);
+        } catch (uploadError) {
+          console.error("Failed to upload images to Convex storage:", uploadError);
+          return json(
+            {
+              message:
+                uploadError instanceof Error
+                  ? uploadError.message
+                  : "Failed to upload reference images to Convex storage.",
+              code: "STORAGE_UPLOAD_FAILED",
+            },
+            502,
+          );
+        }
+      }
+
+      // 3. Append reference URLs before the perform cleanup text of the prompt
+      userPromptWithReferences = (rawPrompt as string)?.trim() || "";
+      if (referenceUrls.length > 0) {
+        const referenceBlock = formatReferenceUrls(referenceUrls);
+        userPromptWithReferences = `${userPromptWithReferences}\n\n${referenceBlock}`;
+      }
     }
 
     await waitUntilGuestReady(vm);
 
-    const result = await execWithRetry(vm, {
-      command: REMOTE_LAUNCH_COMMAND,
-      env: {
-        PROJECT_DIR: config.projectDir,
-        USER_PROMPT: userPromptWithReferences,
-        YOUTUBE_UPLOAD: validatedYoutube.value ? "1" : "0",
-        PERFORM_CLEANUP: validatedCleanup.value ? "1" : "0",
-      },
-      linuxUser: config.linuxUser,
-      timeoutMs: 30_000,
-    });
+    const result = isMachine1
+      ? await execWithRetry(vm, {
+          command: REMOTE_DEV_COMMAND,
+          env: {
+            PROJECT_DIR: config.projectDir,
+          },
+          linuxUser: config.linuxUser,
+          timeoutMs: 30_000,
+        })
+      : await execWithRetry(vm, {
+          command: REMOTE_LAUNCH_COMMAND,
+          env: {
+            PROJECT_DIR: config.projectDir,
+            USER_PROMPT: userPromptWithReferences,
+            YOUTUBE_UPLOAD: rawYoutube ? "1" : "0",
+            PERFORM_CLEANUP: rawCleanup ? "1" : "0",
+          },
+          linuxUser: config.linuxUser,
+          timeoutMs: 30_000,
+        });
 
     if (result.statusCode === 75) {
       return json(
@@ -560,15 +611,20 @@ export async function POST(request: NextRequest) {
 
     return json(
       {
-        message:
-          "Your video task is running in the background. You can safely close this page.",
+        message: isMachine1
+          ? "Your dev task is running in the background."
+          : "Your video task is running in the background. You can safely close this page.",
         code: "LAUNCHED",
         job: {
           pid,
           logPath: `${config.projectDir}/.run/dev.log`,
         },
-        imageUrls: referenceUrls,
-        finalPrompt: userPromptWithReferences,
+        ...(isMachine1
+          ? {}
+          : {
+              imageUrls: referenceUrls,
+              finalPrompt: userPromptWithReferences,
+            }),
       },
       202,
     );
