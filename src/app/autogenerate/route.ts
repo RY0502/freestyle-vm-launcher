@@ -38,6 +38,39 @@ printf '%s\n' "$pid" >.run/dev.pid
 printf '%s\n' "$pid"
 `.trim();
 
+const REMOTE_PIPELINE_SUBMIT_COMMAND = String.raw`
+set -u
+cd "$PROJECT_DIR" || exit 72
+umask 077
+mkdir -p .run
+exec 9>.run/dev.lock
+/usr/bin/flock -n 9 || {
+  printf 'ALREADY_RUNNING\n' >&2
+  exit 75
+}
+
+old_pid=""
+if [ -s .run/dev.pid ]; then
+  old_pid="$(cat .run/dev.pid 2>/dev/null || true)"
+fi
+
+case "$old_pid" in
+  ""|*[!0-9]*)
+    ;;
+  *)
+    if kill -0 "$old_pid" 2>/dev/null; then
+      printf 'ALREADY_RUNNING\n' >&2
+      exit 75
+    fi
+    ;;
+esac
+
+nohup /usr/local/bin/npm run pipeline:submit >>.run/dev.log 2>&1 </dev/null 9>&9 &
+pid=$!
+printf '%s\n' "$pid" >.run/dev.pid
+printf '%s\n' "$pid"
+`.trim();
+
 type ServerConfig = {
   apiKey: string;
   vmId: string;
@@ -293,8 +326,13 @@ async function handleAutogenerate(request: NextRequest) {
     await waitUntilRunning(freestyle, config.vmId, started.state);
     await waitUntilGuestReady(vm);
 
+    const isMachine1 = config.machine === "1";
+    const remoteCommand = isMachine1
+      ? REMOTE_PIPELINE_SUBMIT_COMMAND
+      : REMOTE_AUTOGENERATE_COMMAND;
+
     const result = await execWithRetry(vm, {
-      command: REMOTE_AUTOGENERATE_COMMAND,
+      command: remoteCommand,
       env: {
         PROJECT_DIR: config.projectDir,
       },
