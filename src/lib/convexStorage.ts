@@ -63,9 +63,9 @@ export function sanitizeImageFileName(name: string, fallbackIndex = 1): string {
  */
 export function extractFileNameFromConvexPath(path: string): string {
   const base = path.replace(/^.*[\\/]/, '');
-  const underscoreIndex = base.indexOf('_');
-  if (underscoreIndex !== -1 && /^\d+_/.test(base)) {
-    return base.slice(underscoreIndex + 1);
+  const prefixMatch = base.match(/^\d+[_-](.+)$/);
+  if (prefixMatch && prefixMatch[1]) {
+    return prefixMatch[1];
   }
   return base;
 }

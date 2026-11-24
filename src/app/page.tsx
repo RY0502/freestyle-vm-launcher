@@ -205,7 +205,20 @@ export default function Home() {
       const response = await fetch("/api/images/clear", {
         method: "POST",
       });
-      const data = await response.json();
+      let data: { success?: boolean; message?: string } = {};
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        try {
+          data = (await response.json()) as { success?: boolean; message?: string };
+        } catch {
+          // ignore json parse error
+        }
+      } else {
+        const text = await response.text().catch(() => "");
+        if (text) {
+          data = { success: response.ok, message: text.slice(0, 300) };
+        }
+      }
 
       if (response.ok && data.success) {
         setConvexClearNotice({
@@ -215,7 +228,7 @@ export default function Home() {
       } else {
         setConvexClearNotice({
           type: "error",
-          text: data.message || "Failed to delete images from Convex.",
+          text: data.message || `Failed to delete images from Convex (HTTP ${response.status}).`,
         });
       }
     } catch (err) {
@@ -255,10 +268,25 @@ export default function Home() {
         body: formData,
       });
 
-      const data = (await response.json()) as { message?: string };
+      let data: { message?: string; code?: string } = {};
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        try {
+          data = (await response.json()) as { message?: string; code?: string };
+        } catch {
+          // Fallback if parsing fails
+        }
+      } else {
+        const text = await response.text().catch(() => "");
+        if (text) {
+          data = { message: text.slice(0, 300) };
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(data.message ?? "We couldn’t start the render. Please try again.");
+        throw new Error(
+          data.message ?? `We couldn’t start the render (HTTP ${response.status}). Please try again.`
+        );
       }
 
       handleClearAllImages();
