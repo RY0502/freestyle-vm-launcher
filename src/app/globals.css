@@ -993,6 +993,87 @@ a {
   margin: 0;
 }
 
+.storage-management {
+  margin: 32px auto 0;
+  max-width: 1240px;
+  padding: 0 70px;
+}
+
+.storage-management-card {
+  align-items: center;
+  backdrop-filter: blur(16px);
+  background: var(--card);
+  border: 1px solid rgba(23, 24, 21, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(60, 57, 43, 0.05);
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 18px 24px;
+}
+
+.storage-management-badge {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 8px;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.storage-management-dot {
+  background: var(--orange);
+  border-radius: 50%;
+  display: inline-block;
+  height: 6px;
+  width: 6px;
+}
+
+.storage-management-desc {
+  color: #62645d;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.storage-clear-btn {
+  align-items: center;
+  background: rgba(255, 107, 53, 0.08);
+  border: 1px solid rgba(255, 107, 53, 0.28);
+  border-radius: 999px;
+  color: #b33909;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 18px;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.storage-clear-btn:hover:not(:disabled) {
+  background: #b33909;
+  border-color: #b33909;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.storage-clear-btn:focus-visible {
+  outline: 3px solid var(--orange);
+  outline-offset: 3px;
+}
+
+.storage-clear-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 footer {
   align-items: center;
   color: #7c7d76;
@@ -1107,6 +1188,21 @@ footer {
     border-left: 0;
     border-top: 1px solid rgba(255, 255, 255, 0.13);
     padding: 26px 0;
+  }
+
+  .storage-management {
+    padding-inline: 18px;
+  }
+
+  .storage-management-card {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .storage-clear-btn {
+    justify-content: center;
+    width: 100%;
   }
 
   footer {

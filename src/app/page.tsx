@@ -96,6 +96,11 @@ export default function Home() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [fileNotice, setFileNotice] = useState<string | null>(null);
   const [launchState, setLaunchState] = useState<LaunchState>({ type: "idle" });
+  const [isClearingConvex, setIsClearingConvex] = useState(false);
+  const [convexClearNotice, setConvexClearNotice] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -126,7 +131,7 @@ export default function Home() {
     const validImageFiles = rawFiles.filter(
       (f) =>
         f.type.startsWith("image/") ||
-        /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(f.name)
+        /\.(jpe?g|png|webp|gif|bmp|avif|heic|heif|tiff?|mpo)$/i.test(f.name)
     );
 
     if (validImageFiles.length === 0) {
@@ -183,6 +188,44 @@ export default function Home() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  async function handleClearConvexStorage() {
+    if (isClearingConvex) return;
+
+    const confirmed = window.confirm(
+      "Are you sure you want to delete all uploaded images in Convex storage? This will delete all files in the input directory."
+    );
+    if (!confirmed) return;
+
+    setIsClearingConvex(true);
+    setConvexClearNotice(null);
+
+    try {
+      const response = await fetch("/api/images/clear", {
+        method: "POST",
+      });
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setConvexClearNotice({
+          type: "success",
+          text: data.message || "All uploaded images deleted from Convex.",
+        });
+      } else {
+        setConvexClearNotice({
+          type: "error",
+          text: data.message || "Failed to delete images from Convex.",
+        });
+      }
+    } catch (err) {
+      setConvexClearNotice({
+        type: "error",
+        text: (err as Error).message || "Network error while deleting images.",
+      });
+    } finally {
+      setIsClearingConvex(false);
+    }
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -648,6 +691,55 @@ export default function Home() {
             </div>
           </li>
         </ol>
+      </section>
+
+      <section className="storage-management" aria-label="Convex storage management">
+        <div className="storage-management-card">
+          <div className="storage-management-info">
+            <div className="storage-management-badge">
+              <span className="storage-management-dot" aria-hidden="true" />
+              <span>Convex Cloud Storage</span>
+            </div>
+            <p className="storage-management-desc">
+              Delete all reference images currently stored in Convex input storage.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="storage-clear-btn"
+            onClick={handleClearConvexStorage}
+            disabled={isClearingConvex}
+            aria-busy={isClearingConvex}
+            title="Delete all uploaded images in Convex storage"
+          >
+            {isClearingConvex ? (
+              <>
+                <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} aria-hidden="true" />
+                <span>Deleting from Convex...</span>
+              </>
+            ) : (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+                <span>Delete all uploaded images at Convex</span>
+              </>
+            )}
+          </button>
+        </div>
+
+        {convexClearNotice && (
+          <div className={`notice notice-${convexClearNotice.type}`} role="alert" style={{ marginTop: 12 }}>
+            <span aria-hidden="true">{convexClearNotice.type === "success" ? "OK" : "!"}</span>
+            <div>
+              <strong>{convexClearNotice.type === "success" ? "Storage Cleared" : "Deletion Failed"}</strong>
+              <p>{convexClearNotice.text}</p>
+            </div>
+          </div>
+        )}
       </section>
 
       <footer>

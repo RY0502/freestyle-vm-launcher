@@ -385,7 +385,7 @@ export async function POST(request: NextRequest) {
         for (const file of files) {
           if (
             !file.type.startsWith("image/") &&
-            !file.name.match(/\.(jpe?g|png|webp|gif|bmp|avif)$/i)
+            !file.name.match(/\.(jpe?g|png|webp|gif|bmp|avif|heic|heif|tiff?|mpo)$/i)
           ) {
             return json(
               { message: `File "${file.name}" is not a supported image file.` },
@@ -422,7 +422,7 @@ export async function POST(request: NextRequest) {
           if (item && typeof item === "object" && "base64" in item) {
             const imgObj = item as { name?: string; type?: string; base64: string };
             imagesToUpload.push({
-              name: imgObj.name || `image_${imagesToUpload.length + 1}.png`,
+              name: imgObj.name || `image-${imagesToUpload.length + 1}.png`,
               type: imgObj.type || "image/png",
               data: Buffer.from(imgObj.base64, "base64"),
             });

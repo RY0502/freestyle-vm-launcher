@@ -1,10 +1,73 @@
 import crypto from 'node:crypto';
-import { compressImage } from './imageCompressor';
+import { ensureSupportedImage, compressImage } from './imageCompressor';
 
 export interface UploadedImageInput {
   name: string;
   type: string;
   data: Buffer | Uint8Array;
+}
+
+/**
+ * Sanitizes an uploaded image filename so it is safe across all platforms (web, Windows, Linux, Convex).
+ * Handles character cases:
+ * - Replaces underscores (`_`), spaces, and non-alphanumeric characters with hyphens (`-`) so underscores
+ *   are reserved exclusively for the index prefix (`${index}_${sanitizedName}`).
+ * - Replaces dots in the base name with hyphens so there is only a single extension dot.
+ * - Converts to lowercase for consistent case sensitivity across OSes and URL handlers.
+ * - Collapses consecutive hyphens and trims leading/trailing hyphens from the stem.
+ * - Preserves valid image extensions or defaults to 'png'.
+ */
+export function sanitizeImageFileName(name: string, fallbackIndex = 1): string {
+  const fallback = `image-${fallbackIndex}.png`;
+  if (!name || typeof name !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const lastDotIndex = trimmed.lastIndexOf('.');
+  const hasDot = lastDotIndex !== -1;
+  const rawStem = hasDot && lastDotIndex > 0 ? trimmed.slice(0, lastDotIndex) : (hasDot ? '' : trimmed);
+  const rawExt = hasDot ? trimmed.slice(lastDotIndex + 1) : '';
+
+  let cleanStem = rawStem
+    .normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .toLowerCase()
+    .replace(/[_.\s]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!cleanStem) {
+    cleanStem = `image-${fallbackIndex}`;
+  }
+
+  let cleanExt = rawExt
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  if (!cleanExt || !/^(jpe?g|png|webp|gif|bmp|avif|heic|heif|tiff?|mpo)$/i.test(cleanExt)) {
+    cleanExt = 'png';
+  }
+
+  return `${cleanStem}.${cleanExt}`;
+}
+
+/**
+ * Extracts the clean file name from a Convex virtual path (e.g., 'input/1_my-image.png' -> 'my-image.png').
+ * Robust against any index prefix format or underscore delimiters.
+ */
+export function extractFileNameFromConvexPath(path: string): string {
+  const base = path.replace(/^.*[\\/]/, '');
+  const underscoreIndex = base.indexOf('_');
+  if (underscoreIndex !== -1 && /^\d+_/.test(base)) {
+    return base.slice(underscoreIndex + 1);
+  }
+  return base;
 }
 
 export interface ConvexStorageConfig {
@@ -125,23 +188,24 @@ export async function uploadInputImages(
     let imageBuffer = Buffer.isBuffer(image.data)
       ? image.data
       : Buffer.from(image.data);
-    const originalName = image.name || `image_${i + 1}.png`;
-    let sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const originalName = image.name || `image-${i + 1}.png`;
+    let sanitizedName = sanitizeImageFileName(originalName, i + 1);
     let contentType = image.type && image.type.startsWith('image/')
       ? image.type
       : 'image/png';
 
-    // Compress using FFmpeg adaptive 256-color palette + downscale (same mechanism as content-generator-video)
-    const compressedBuffer = compressImage(imageBuffer);
-    if (compressedBuffer.length < imageBuffer.length) {
+    // Ensure image format is supported downstream (JPEG, PNG, WebP are used as-is;
+    // GIF, AVIF, HEIC, BMP, TIFF, etc. are converted to lossless PNG with zero quality loss).
+    const processed = ensureSupportedImage(imageBuffer, originalName);
+    imageBuffer = processed.buffer;
+    if (processed.converted) {
       console.log(
-        `[convexStorage] Compressed "${originalName}" from ${imageBuffer.length} bytes to ${compressedBuffer.length} bytes (${((1 - compressedBuffer.length / imageBuffer.length) * 100).toFixed(1)}% reduction)`
+        `[convexStorage] Converted "${originalName}" (${processed.detectedFormat}) to lossless PNG for video agent compatibility.`
       );
-      imageBuffer = compressedBuffer;
-      contentType = 'image/png';
-      if (!sanitizedName.toLowerCase().endsWith('.png')) {
-        sanitizedName = sanitizedName.replace(/\.[^/.]+$/, '') + '.png';
-      }
+      contentType = processed.contentType;
+      sanitizedName = sanitizedName.replace(/\.[^/.]+$/, '') + `.${processed.extension}`;
+    } else if (processed.contentType) {
+      contentType = processed.contentType;
     }
 
     const targetFileName = `${i + 1}_${sanitizedName}`;
@@ -214,6 +278,11 @@ export async function uploadInputImages(
           contentType,
           size: imageBuffer.length,
           sha256,
+          metadata: {
+            originalName,
+            sanitizedName,
+            index: i + 1,
+          },
         },
         format: 'json',
       }),
@@ -256,4 +325,9 @@ export function formatReferenceUrls(urls: string[]): string {
   return `Reference urls:\n${urls.join('\n')}`;
 }
 
-export { compressImage, compressPortraitImage } from './imageCompressor';
+export {
+  ensureSupportedImage,
+  convertToLosslessPng,
+  compressImage,
+  compressPortraitImage,
+} from './imageCompressor';
