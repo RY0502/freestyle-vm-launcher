@@ -194,7 +194,7 @@ export default function Home() {
     if (isClearingConvex) return;
 
     const confirmed = window.confirm(
-      "Are you sure you want to delete all uploaded images in Convex storage? This will delete all files in the input directory."
+      "Are you sure you want to delete all uploaded images for this project? This will remove files from Convex storage and purge them from the Cloudflare CDN cache."
     );
     if (!confirmed) return;
 
@@ -223,12 +223,12 @@ export default function Home() {
       if (response.ok && data.success) {
         setConvexClearNotice({
           type: "success",
-          text: data.message || "All uploaded images deleted from Convex.",
+          text: data.message || "All uploaded images deleted from Convex and purged from Cloudflare CDN.",
         });
       } else {
         setConvexClearNotice({
           type: "error",
-          text: data.message || `Failed to delete images from Convex (HTTP ${response.status}).`,
+          text: data.message || `Failed to clear images from storage or CDN (HTTP ${response.status}).`,
         });
       }
     } catch (err) {
@@ -721,15 +721,15 @@ export default function Home() {
         </ol>
       </section>
 
-      <section className="storage-management" aria-label="Convex storage management">
+      <section className="storage-management" aria-label="Storage and CDN management">
         <div className="storage-management-card">
           <div className="storage-management-info">
             <div className="storage-management-badge">
               <span className="storage-management-dot" aria-hidden="true" />
-              <span>Convex Cloud Storage</span>
+              <span>Convex Storage & Cloudflare CDN</span>
             </div>
             <p className="storage-management-desc">
-              Delete all reference images currently stored in Convex input storage.
+              Delete uploaded reference images for this project from Convex storage and purge them from the Cloudflare CDN cache.
             </p>
           </div>
           <button
@@ -738,12 +738,12 @@ export default function Home() {
             onClick={handleClearConvexStorage}
             disabled={isClearingConvex}
             aria-busy={isClearingConvex}
-            title="Delete all uploaded images in Convex storage"
+            title="Delete all uploaded images in Convex storage and purge Cloudflare CDN cache"
           >
             {isClearingConvex ? (
               <>
                 <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} aria-hidden="true" />
-                <span>Deleting from Convex...</span>
+                <span>Deleting from Convex & CDN...</span>
               </>
             ) : (
               <>
@@ -753,7 +753,7 @@ export default function Home() {
                   <line x1="10" y1="11" x2="10" y2="17" />
                   <line x1="14" y1="11" x2="14" y2="17" />
                 </svg>
-                <span>Delete all uploaded images at Convex</span>
+                <span>Delete uploaded images (Convex & CDN)</span>
               </>
             )}
           </button>

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { ensureSupportedImage, compressImage } from './imageCompressor';
+import { recordTrackedCdnUrls } from './cdnTracker';
 
 export interface UploadedImageInput {
   name: string;
@@ -311,7 +312,78 @@ export async function uploadInputImages(
     publicUrls.push(publicUrl);
   }
 
+  if (publicUrls.length > 0) {
+    try {
+      await recordTrackedCdnUrls(publicUrls);
+    } catch (trackerErr) {
+      console.warn('[convexStorage] Failed to record tracked CDN URLs:', trackerErr);
+    }
+  }
+
   return publicUrls;
+}
+
+export interface ProjectConvexFile {
+  path: string;
+  storageId: string;
+  url: string;
+}
+
+/**
+ * Lists all files currently in Convex for this project (bucket: 'shared', prefix: 'input/').
+ */
+export async function listProjectConvexFiles(
+  config?: ConvexStorageConfig
+): Promise<ProjectConvexFile[]> {
+  const { convexUrl, convexBucket, convexDeployKey } = config ?? getConvexConfig();
+  const queryUrl = `${convexUrl}/api/query`;
+  const authHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    accept: 'application/json',
+  };
+  if (convexDeployKey) {
+    authHeaders.authorization = formatAuthHeader(convexDeployKey);
+  }
+
+  const response = await fetch(queryUrl, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({
+      path: 'files:listFiles',
+      args: {
+        bucket: convexBucket,
+      },
+      format: 'json',
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Failed to list Convex files (HTTP ${response.status}): ${errorText}`);
+  }
+
+  const result = (await response.json()) as {
+    status?: string;
+    value?: Array<{
+      path?: string;
+      storageId?: string;
+      url?: string;
+    }>;
+    errorMessage?: string;
+  };
+
+  if (result.status === 'error') {
+    throw new Error(`Failed to list Convex files: ${result.errorMessage || 'Unknown error'}`);
+  }
+
+  const allFiles = result.value || [];
+  return allFiles
+    .filter((f) => f.path && f.path.startsWith('input/'))
+    .map((f) => ({
+      path: f.path!,
+      storageId: f.storageId || '',
+      url: f.url || (f.storageId ? `${convexUrl}/api/storage/${f.storageId}` : ''),
+    }));
 }
 
 /**

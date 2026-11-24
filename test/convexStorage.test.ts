@@ -75,9 +75,13 @@ test("sanitizeImageFileName supports all common image extensions", () => {
 
 test("extractFileNameFromConvexPath extracts clean name from path with index prefix", () => {
   assert.equal(extractFileNameFromConvexPath("input/1_my-image.png"), "my-image.png");
+  assert.equal(extractFileNameFromConvexPath("input/1-my-image.png"), "my-image.png");
   assert.equal(extractFileNameFromConvexPath("input/5_photo-2026.jpg"), "photo-2026.jpg");
+  assert.equal(extractFileNameFromConvexPath("input/5-photo-2026.jpg"), "photo-2026.jpg");
   assert.equal(extractFileNameFromConvexPath("shared/input/12_scene-bg.webp"), "scene-bg.webp");
+  assert.equal(extractFileNameFromConvexPath("shared/input/12-scene-bg.webp"), "scene-bg.webp");
   assert.equal(extractFileNameFromConvexPath("1_simple.png"), "simple.png");
+  assert.equal(extractFileNameFromConvexPath("1-simple.png"), "simple.png");
   assert.equal(extractFileNameFromConvexPath("no-prefix.png"), "no-prefix.png");
 });
 
@@ -188,4 +192,40 @@ test("ensureSupportedImage converts GIF and BMP to lossless PNG", () => {
   assert.equal(bmpRes.buffer[1], 0x50);
   assert.equal(bmpRes.buffer[2], 0x4e);
   assert.equal(bmpRes.buffer[3], 0x47);
+});
+
+test("cdnTracker records, retrieves, and prunes CDN URLs properly", async () => {
+  const {
+    getTrackedCdnUrls,
+    recordTrackedCdnUrls,
+    removeTrackedCdnUrls,
+  } = await import("../src/lib/cdnTracker");
+
+  const initial = await getTrackedCdnUrls();
+  assert.ok(Array.isArray(initial));
+
+  const testUrl = "https://convex-portrait-cache.ravi-y0102.workers.dev/api/storage/test-uuid-12345";
+  const updated = await recordTrackedCdnUrls([testUrl]);
+  assert.ok(updated.includes(testUrl));
+
+  const fetched = await getTrackedCdnUrls();
+  assert.ok(fetched.includes(testUrl));
+
+  const pruned = await removeTrackedCdnUrls([testUrl]);
+  assert.ok(!pruned.includes(testUrl));
+});
+
+test("purgeCdnUrls handles empty, single, and multiple URLs gracefully without throwing", async () => {
+  const { purgeCdnUrls } = await import("../src/lib/cdnPurge");
+
+  // Empty list
+  const emptyRes = await purgeCdnUrls([]);
+  assert.equal(emptyRes.success, true);
+  assert.equal(emptyRes.total, 0);
+
+  // Non-empty list (simulated/offline or live)
+  const dummyUrl = "https://convex-portrait-cache.ravi-y0102.workers.dev/api/storage/914b6929-ba8a-453f-9422-a39b25943f15";
+  const res = await purgeCdnUrls([dummyUrl]);
+  assert.equal(typeof res.success, "boolean");
+  assert.equal(res.total, 1);
 });
