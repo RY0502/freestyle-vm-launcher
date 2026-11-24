@@ -196,12 +196,12 @@ export async function uploadInputImages(
       : 'image/png';
 
     // Ensure image format is supported downstream (JPEG, PNG, WebP are used as-is;
-    // GIF, AVIF, HEIC, BMP, TIFF, etc. are converted to lossless PNG with zero quality loss).
+    // Camera formats like HEIC, BMP, TIFF, MPO are converted to 100% quality JPEG; GIF to PNG).
     const processed = ensureSupportedImage(imageBuffer, originalName);
     imageBuffer = processed.buffer;
     if (processed.converted) {
       console.log(
-        `[convexStorage] Converted "${originalName}" (${processed.detectedFormat}) to lossless PNG for video agent compatibility.`
+        `[convexStorage] Converted "${originalName}" (${processed.detectedFormat}) to ${processed.extension.toUpperCase()} for video agent compatibility.`
       );
       contentType = processed.contentType;
       sanitizedName = sanitizedName.replace(/\.[^/.]+$/, '') + `.${processed.extension}`;

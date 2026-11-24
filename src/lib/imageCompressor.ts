@@ -1,4 +1,8 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
 
 export type SupportedImageFormat = "jpeg" | "png" | "webp";
 export type DetectedImageFormat =
@@ -127,6 +131,59 @@ export function isSupportedAsIs(format: DetectedImageFormat): boolean {
 }
 
 /**
+ * Converts an image buffer to the target format (JPEG or PNG) using FFmpeg with a temporary seekable file.
+ * A temporary seekable file is essential because container formats such as HEIC and AVIF cannot be decoded from streams/pipes.
+ */
+export function convertImageViaFfmpeg(
+  buffer: Buffer,
+  targetFormat: "jpeg" | "png",
+  options?: ImageProcessingOptions,
+): Buffer | null {
+  const ffmpegPath = options?.ffmpegPath ?? process.env.FFMPEG_PATH ?? "ffmpeg";
+  const tmpDir = os.tmpdir();
+  const id = crypto.randomUUID();
+  const inPath = path.join(tmpDir, `in_${id}.bin`);
+  const outExt = targetFormat === "jpeg" ? "jpg" : "png";
+  const outPath = path.join(tmpDir, `out_${id}.${outExt}`);
+
+  try {
+    fs.writeFileSync(inPath, buffer);
+    const args = [
+      "-y",
+      "-i", inPath,
+      "-vframes", "1",
+      ...(targetFormat === "jpeg"
+        ? ["-q:v", "1", "-qscale:v", "1"] // Maximum 100% quality JPEG (visually lossless)
+        : ["-c:v", "png"]),             // Lossless 24/32-bit PNG
+      "-update", "1",
+      outPath,
+    ];
+
+    const result = spawnSync(/*turbopackIgnore: true*/ ffmpegPath, args, {
+      windowsHide: true,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+
+    if (result.status === 0 && fs.existsSync(outPath)) {
+      const outBuf = fs.readFileSync(outPath);
+      if (outBuf.length > 0) {
+        return outBuf;
+      }
+    }
+
+    const stderr = result.stderr ? result.stderr.toString() : "";
+    console.warn(`[imageCompressor] FFmpeg conversion to ${targetFormat} failed (code ${result.status}): ${stderr}`);
+    return null;
+  } catch (err) {
+    console.warn(`[imageCompressor] FFmpeg conversion error: ${(err as Error).message}`);
+    return null;
+  } finally {
+    try { if (fs.existsSync(inPath)) fs.unlinkSync(inPath); } catch {}
+    try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
+  }
+}
+
+/**
  * Losslessly converts an image buffer to 24-bit/32-bit PNG using FFmpeg.
  * - For animated or multi-frame formats (like GIF), extracts the first frame losslessly (-vframes 1).
  * - Never quantizes colors or reduces palette (avoids quality loss from 256-color palette dithering).
@@ -136,41 +193,8 @@ export function convertToLosslessPng(
   buffer: Buffer,
   options?: ImageProcessingOptions,
 ): Buffer {
-  const ffmpegPath = options?.ffmpegPath ?? process.env.FFMPEG_PATH ?? "ffmpeg";
-
-  try {
-    const result = spawnSync(
-      /*turbopackIgnore: true*/ ffmpegPath,
-      [
-        "-y",
-        "-i", "pipe:0",
-        "-vframes", "1",
-        "-c:v", "png",
-        "-f", "image2",
-        "pipe:1",
-      ],
-      {
-        input: buffer,
-        maxBuffer: 50 * 1024 * 1024,
-        windowsHide: true,
-      },
-    );
-
-    if (
-      result.status === 0 &&
-      result.stdout &&
-      result.stdout.length > 0
-    ) {
-      return result.stdout;
-    }
-
-    const stderr = result.stderr ? result.stderr.toString() : "";
-    console.warn(`[imageCompressor] Lossless PNG conversion failed (code ${result.status}): ${stderr}`);
-  } catch (err) {
-    console.warn(`[imageCompressor] Lossless PNG conversion error: ${(err as Error).message}`);
-  }
-
-  return buffer;
+  const converted = convertImageViaFfmpeg(buffer, "png", options);
+  return converted ?? buffer;
 }
 
 export interface EnsureSupportedImageResult {
@@ -186,8 +210,10 @@ export interface EnsureSupportedImageResult {
  *
  * Rules:
  * 1. JPEG, PNG, and WebP are used AS-IS without re-encoding to prevent any quality loss.
- * 2. Unsupported formats (GIF, AVIF, HEIC, HEIF, BMP, TIFF, MPO, etc.) are converted to lossless PNG.
- * 3. File extension and MIME type are updated accordingly.
+ * 2. Camera photo formats (HEIC, HEIF, TIFF, BMP, MPO) are converted to maximum-quality JPEG (100% visual fidelity).
+ *    This avoids 25-50MB uncompressed PNG sizes that exceed video API ingestion limits.
+ * 3. Formats like GIF (which may contain transparency or animation) are converted to lossless PNG.
+ * 4. File extension and MIME type are strictly updated to match the resulting bytes.
  */
 export function ensureSupportedImage(
   buffer: Buffer,
@@ -214,33 +240,39 @@ export function ensureSupportedImage(
     };
   }
 
-  // Format is unsupported by downstream video agents (e.g. GIF, AVIF, HEIC, BMP, TIFF)
-  // Convert losslessly to PNG
-  const convertedBuffer = convertToLosslessPng(buffer, options);
-  const conversionSucceeded =
-    convertedBuffer !== buffer &&
-    convertedBuffer.length >= 8 &&
-    convertedBuffer[0] === 0x89 &&
-    convertedBuffer[1] === 0x50;
+  // Determine optimal target format:
+  // Upstream video APIs specify: "BMP, TIFF, HEIC, HEIF and MPO are converted to JPEG, and GIF is not supported"
+  const preferJpeg =
+    detectedFormat === "heic" ||
+    detectedFormat === "tiff" ||
+    detectedFormat === "bmp" ||
+    detectedFormat === "mpo";
 
-  if (conversionSucceeded) {
+  const primaryTarget: "jpeg" | "png" = preferJpeg ? "jpeg" : "png";
+  const fallbackTarget: "jpeg" | "png" = preferJpeg ? "png" : "jpeg";
+
+  let convertedBuffer = convertImageViaFfmpeg(buffer, primaryTarget, options);
+  let finalTarget = primaryTarget;
+
+  if (!convertedBuffer) {
+    convertedBuffer = convertImageViaFfmpeg(buffer, fallbackTarget, options);
+    finalTarget = fallbackTarget;
+  }
+
+  if (convertedBuffer && convertedBuffer.length > 0) {
+    const isJpeg = finalTarget === "jpeg";
     return {
       buffer: convertedBuffer,
-      contentType: "image/png",
-      extension: "png",
+      contentType: isJpeg ? "image/jpeg" : "image/png",
+      extension: isJpeg ? "jpg" : "png",
       converted: true,
       detectedFormat,
     };
   }
 
-  // Fallback: if conversion failed, retain original buffer
-  return {
-    buffer,
-    contentType: "image/png",
-    extension: "png",
-    converted: false,
-    detectedFormat,
-  };
+  throw new Error(
+    `Unsupported image format (${detectedFormat}) for "${filename || "uploaded image"}". Failed to convert to JPEG/PNG for video generation.`
+  );
 }
 
 export interface CompressImageOptions extends ImageProcessingOptions {

@@ -165,7 +165,7 @@ test("ensureSupportedImage retains supported formats as-is with zero quality los
   assert.equal(jpegRes.buffer, fakeJpeg); // Exact same buffer, zero quality loss
 });
 
-test("ensureSupportedImage converts GIF and BMP to lossless PNG", () => {
+test("ensureSupportedImage converts GIF to lossless PNG and BMP to high-quality JPEG", () => {
   const gif1x1 = Buffer.from(
     "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
     "base64"
@@ -186,12 +186,11 @@ test("ensureSupportedImage converts GIF and BMP to lossless PNG", () => {
   );
   const bmpRes = ensureSupportedImage(bmp1x1, "graphic.bmp");
   assert.equal(bmpRes.converted, true);
-  assert.equal(bmpRes.contentType, "image/png");
-  assert.equal(bmpRes.extension, "png");
-  assert.equal(bmpRes.buffer[0], 0x89);
-  assert.equal(bmpRes.buffer[1], 0x50);
-  assert.equal(bmpRes.buffer[2], 0x4e);
-  assert.equal(bmpRes.buffer[3], 0x47);
+  assert.equal(bmpRes.contentType, "image/jpeg");
+  assert.equal(bmpRes.extension, "jpg");
+  // Converted buffer must be valid JPEG
+  assert.equal(bmpRes.buffer[0], 0xff);
+  assert.equal(bmpRes.buffer[1], 0xd8);
 });
 
 test("cdnTracker records, retrieves, and prunes CDN URLs properly", async () => {
